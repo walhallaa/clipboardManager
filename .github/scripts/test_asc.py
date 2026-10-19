@@ -61,6 +61,45 @@ class LatestBuildTests(unittest.TestCase):
             asc.latest_build("com.example.app")
 
 
+class WaitProcessedTests(unittest.TestCase):
+    def setUp(self):
+        patch.object(asc, "token", return_value="token").start()
+        patch.object(asc, "app_id", return_value="app-id").start()
+        self.get = patch.object(asc, "get").start()
+        self.sleep = patch.object(asc.time, "sleep").start()
+        self.addCleanup(patch.stopall)
+
+    @staticmethod
+    def state(value):
+        return {"data": [{"attributes": {"processingState": value, "version": "70"}}]}
+
+    def test_returns_once_valid(self):
+        self.get.side_effect = [self.state("PROCESSING"), self.state("PROCESSING"), self.state("VALID")]
+        asc.wait_processed("com.example.app", "3.2.0", "70")
+        self.assertEqual(self.get.call_count, 3)
+        self.assertEqual(self.sleep.call_count, 2)
+        query = self.get.call_args.kwargs
+        self.assertEqual(query["filter[version]"], "70")
+        self.assertEqual(query["filter[preReleaseVersion.version]"], "3.2.0")
+
+    def test_build_not_listed_yet_keeps_waiting(self):
+        self.get.side_effect = [{"data": []}, self.state("VALID")]
+        asc.wait_processed("com.example.app", "3.2.0", "70")
+        self.assertEqual(self.sleep.call_count, 1)
+
+    def test_failed_processing_stops(self):
+        self.get.return_value = self.state("INVALID")
+        with self.assertRaisesRegex(SystemExit, "failed processing"):
+            asc.wait_processed("com.example.app", "3.2.0", "70")
+        self.sleep.assert_not_called()
+
+    def test_gives_up_after_timeout(self):
+        self.get.return_value = self.state("PROCESSING")
+        with patch.object(asc.time, "time", side_effect=[0, 0, 61]):
+            with self.assertRaisesRegex(SystemExit, "still PROCESSING after 1 minutes"):
+                asc.wait_processed("com.example.app", "3.2.0", "70", "1")
+
+
 class GetTests(unittest.TestCase):
     @patch.object(asc.urllib.request, "urlopen")
     def test_encoded_pagination_url_is_unchanged(self, urlopen):

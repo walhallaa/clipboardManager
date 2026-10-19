@@ -3,6 +3,8 @@
 
 usage: asc.py latest-build  <bundle-id> [marketing-version]   highest build number across all versions unless scoped (0 if none)
        asc.py version-state <bundle-id> <marketing-version>   store state, or NONE if the version doesn't exist yet
+       asc.py wait-processed <bundle-id> <marketing-version> <build> [timeout-minutes]
+                                                             block until App Store Connect has finished processing the build
        asc.py mac-app-store-profile <bundle-id> <cert-serial> <output-path>
                                                              write an active Mac App Store profile for the
                                                              distribution cert (created if missing), print its UUID
@@ -119,6 +121,35 @@ def version_state(bundle_id: str, version: str) -> str:
     return attributes.get("appVersionState") or attributes.get("appStoreState") or "UNKNOWN"
 
 
+def wait_processed(bundle_id: str, version: str, build: str, timeout_minutes: str = "40") -> None:
+    """A build can't be submitted for review until processing is VALID (usually a few minutes after upload)."""
+    deadline = time.time() + float(timeout_minutes) * 60
+    while True:
+        bearer = token()  # tokens last 10 minutes, so mint a fresh one per poll
+        app = app_id(bundle_id, bearer)
+        if app is None:
+            sys.exit(f"No app with bundle ID {bundle_id} in App Store Connect")
+        builds = get(
+            "builds", bearer,
+            **{
+                "filter[app]": app,
+                "filter[preReleaseVersion.version]": version,
+                "filter[version]": build,
+                "fields[builds]": "processingState,version",
+            },
+        )["data"]
+        state = builds[0]["attributes"]["processingState"] if builds else "NOT_FOUND_YET"
+        if state == "VALID":
+            print(f"Build {version} ({build}) is processed")
+            return
+        if state in ("INVALID", "FAILED"):
+            sys.exit(f"Build {version} ({build}) failed processing in App Store Connect ({state})")
+        if time.time() >= deadline:
+            sys.exit(f"Build {version} ({build}) was still {state} after {timeout_minutes} minutes")
+        print(f"Build {version} ({build}) is {state}; checking again in 30 seconds", flush=True)
+        time.sleep(30)
+
+
 def mac_app_store_profile(bundle_id: str, cert_serial: str, output_path: str) -> str:
     """Xcode's automatic export signing falls back to cloud-managed certificates, which
     the API key can't use, so the workflow signs manually with this profile instead."""
@@ -182,6 +213,8 @@ def main() -> None:
         print(latest_build(*args))
     elif command == "version-state":
         print(version_state(*args))
+    elif command == "wait-processed":
+        wait_processed(*args)
     elif command == "mac-app-store-profile":
         print(mac_app_store_profile(*args))
     else:

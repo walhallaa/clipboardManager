@@ -1,7 +1,8 @@
 name: App Store Review
 
-# Manual only. Submits a build that App Store Connect has already processed.
-# Protect it with an environment that requires a reviewer (repo Settings > Environments).
+# Manual fallback (for example to resubmit after a rejection). The normal path is the
+# "submit-for-review" job at the end of testflight.yml, which waits for your approval.
+# Starting this by hand is the confirmation, so there is no second approval step.
 
 on:
   workflow_dispatch:
@@ -16,7 +17,6 @@ on:
 jobs:
   submit:
     runs-on: blacksmith-6vcpu-macos-latest
-    environment: app-store-review
     timeout-minutes: 30
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -35,6 +35,7 @@ jobs:
         run: |
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "ASC_API_KEY_PATH=$RUNNER_TEMP/asc_api_key.json" >> "$GITHUB_ENV"
           jq -n --arg id "$ASC_KEY_ID" --arg issuer "$ASC_ISSUER_ID" --arg key "$ASC_PRIVATE_KEY" \
             '{key_id: $id, issuer_id: $issuer, key: $key, in_house: false}' \
             > "$RUNNER_TEMP/asc_api_key.json"
@@ -61,19 +62,7 @@ jobs:
         run: gem install fastlane -N
 
       - name: Submit for review
-        run: |
-          fastlane deliver \
-            --api_key_path "$RUNNER_TEMP/asc_api_key.json" \
-            --app_identifier "$BUNDLE_ID" \
-            --platform osx \
-            --app_version "$VERSION" \
-            --build_number "$BUILD" \
-            --skip_binary_upload \
-            --skip_metadata \
-            --skip_screenshots \
-            --automatic_release false \
-            --submit_for_review \
-            --force
+        run: fastlane submit_for_review version:"$VERSION" build:"$BUILD"
 
       - name: Remove API key
         if: always()

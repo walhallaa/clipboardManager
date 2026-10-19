@@ -1,0 +1,23 @@
+# Only used by CI. Having this folder also stops `fastlane deliver` from asking
+# "No deliver configuration found. Do you want to setup deliver?", which a runner can't answer.
+
+default_platform(:mac)
+
+lane :submit_for_review do |options|
+  deliver(
+    api_key_path: ENV.fetch("ASC_API_KEY_PATH"),
+    app_identifier: ENV.fetch("BUNDLE_ID"),
+    platform: "osx",
+    app_version: options[:version],
+    build_number: options[:build],
+    skip_binary_upload: true,
+    skip_metadata: true,
+    skip_screenshots: true,
+    # Apple approving the version must not release it; you press Release yourself.
+    automatic_release: false,
+    submit_for_review: true,
+    # In-app purchase prechecks need an Apple ID login, not an API key.
+    precheck_include_in_app_purchases: false,
+    force: true
+  )
+end
