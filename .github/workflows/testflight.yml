@@ -93,7 +93,27 @@ jobs:
           # identities are untrusted, Xcode ignores them and falls back to cloud signing.
           curl -fsSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o "$RUNNER_TEMP/AppleWWDRCAG3.cer"
           security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$KEYCHAIN" -t cert -f x509 || true
-          security find-identity -v -p codesigning "$KEYCHAIN"
+          security find-identity -v "$KEYCHAIN"
+          # The Mac App Store export signs the app and the installer .pkg; both identities must be local.
+          for CERT in "Apple Distribution" "3rd Party Mac Developer Installer"; do
+            if ! security find-certificate -c "$CERT" "$KEYCHAIN" >/dev/null 2>&1; then
+              echo "::error::DIST_CERT_P12 has no \"$CERT\" certificate. Export both the Apple Distribution and the Mac Installer Distribution identities (with private keys) into one .p12."
+              exit 1
+            fi
+          done
+
+      - name: Install provisioning profile
+        run: |
+          SERIAL="$(security find-certificate -c "Apple Distribution" -p "$RUNNER_TEMP/build.keychain-db" \
+            | openssl x509 -noout -serial | cut -d= -f2)"
+          PROFILE="$RUNNER_TEMP/AppStore.provisionprofile"
+          UUID="$(.github/scripts/asc.py mac-app-store-profile "$BUNDLE_ID" "$SERIAL" "$PROFILE")"
+          for DIR in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+            mkdir -p "$DIR"
+            cp "$PROFILE" "$DIR/$UUID.provisionprofile"
+          done
+          echo "Using Mac App Store profile $UUID"
+          echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
 
       - name: Archive
         run: |
@@ -121,7 +141,13 @@ jobs:
             <key>method</key><string>app-store-connect</string>
             <key>destination</key><string>upload</string>
             <key>teamID</key><string>$TEAM_ID</string>
-            <key>signingStyle</key><string>automatic</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>installerSigningCertificate</key><string>3rd Party Mac Developer Installer</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key><string>$PROFILE_UUID</string>
+            </dict>
             <key>uploadSymbols</key><true/>
             <key>manageAppVersionAndBuildNumber</key><false/>
           </dict>
@@ -143,4 +169,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
-          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/AppStore.provisionprofile"
