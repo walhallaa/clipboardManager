@@ -61,6 +61,42 @@ class LatestBuildTests(unittest.TestCase):
             asc.latest_build("com.example.app")
 
 
+class SetReleaseNotesTests(unittest.TestCase):
+    def setUp(self):
+        patch.object(asc, "token", return_value="token").start()
+        patch.object(asc, "app_id", return_value="app-id").start()
+        self.get = patch.object(asc, "get").start()
+        self.patch = patch.object(asc, "patch").start()
+        self.addCleanup(patch.stopall)
+        self.notes = {"default": "Everything is faster.", "tr": "Her sey daha hizli.", "en-US": "Faster, US."}
+        patch.object(asc.release_notes, "load", return_value=self.notes).start()
+
+    def localizations(self, *locales):
+        self.get.side_effect = [
+            {"data": [{"id": "version-id"}]},
+            {"data": [{"id": f"loc-{l}", "attributes": {"locale": l}} for l in locales]},
+        ]
+
+    def sent(self):
+        return {call.args[0]: call.args[2]["data"]["attributes"]["whatsNew"] for call in self.patch.call_args_list}
+
+    def test_exact_locale_then_language_then_default(self):
+        self.localizations("en-US", "tr", "de-DE", "tr-TR")
+        asc.set_release_notes("com.example.app", "3.2.0", "dir")
+        self.assertEqual(self.sent(), {
+            "appStoreVersionLocalizations/loc-en-US": "Faster, US.",
+            "appStoreVersionLocalizations/loc-tr": "Her sey daha hizli.",
+            "appStoreVersionLocalizations/loc-de-DE": "Everything is faster.",
+            "appStoreVersionLocalizations/loc-tr-TR": "Her sey daha hizli.",
+        })
+
+    def test_missing_version_stops_before_writing(self):
+        self.get.side_effect = [{"data": []}]
+        with self.assertRaisesRegex(SystemExit, "doesn't exist"):
+            asc.set_release_notes("com.example.app", "9.9.9", "dir")
+        self.patch.assert_not_called()
+
+
 class LatestUploadTests(unittest.TestCase):
     def setUp(self):
         patch.object(asc, "token", return_value="token").start()

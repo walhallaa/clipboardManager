@@ -212,6 +212,11 @@ jobs:
       - name: Wait for App Store Connect to process the build
         run: .github/scripts/asc.py wait-processed "$BUNDLE_ID" "$VERSION" "$BUILD"
 
+      - name: Send release notes to App Store Connect
+        run: |
+          python3 .github/scripts/release_notes.py check
+          .github/scripts/asc.py set-release-notes "$BUNDLE_ID" "$VERSION" fastlane/release_notes
+
       - name: Install fastlane
         run: sudo gem install fastlane -N
 

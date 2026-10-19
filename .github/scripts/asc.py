@@ -4,6 +4,8 @@
 usage: asc.py latest-build  <bundle-id> [marketing-version]   highest build number across all versions unless scoped (0 if none)
        asc.py version-state <bundle-id> <marketing-version>   store state, or NONE if the version doesn't exist yet
        asc.py latest-upload <bundle-id>                       "<marketing-version> <build>" of the most recently uploaded build
+       asc.py set-release-notes <bundle-id> <marketing-version> <notes-directory>
+                                                             write fastlane/release_notes into every language's "What's New"
        asc.py wait-processed <bundle-id> <marketing-version> <build> [timeout-minutes]
                                                              block until App Store Connect has finished processing the build
        asc.py mac-app-store-profile <bundle-id> <cert-serial> <output-path>
@@ -20,6 +22,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import release_notes
 
 API = "https://api.appstoreconnect.apple.com/v1"
 
@@ -72,6 +76,18 @@ def post(path: str, bearer: str, body: dict) -> dict:
             return json.load(response)
     except urllib.error.HTTPError as error:
         sys.exit(f"POST {path} failed ({error.code}): {error.read().decode()}")
+
+
+def patch(path: str, bearer: str, body: dict) -> dict:
+    request = urllib.request.Request(
+        f"{API}/{path}", data=json.dumps(body).encode(), method="PATCH",
+        headers={"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        sys.exit(f"PATCH {path} failed ({error.code}): {error.read().decode()}")
 
 
 def app_id(bundle_id: str, bearer: str) -> str | None:
@@ -142,6 +158,35 @@ def latest_upload(bundle_id: str) -> str:
     if not page["data"]:
         sys.exit(f"No builds of {bundle_id} in App Store Connect yet")
     return f'{page["included"][0]["attributes"]["version"]} {page["data"][0]["attributes"]["version"]}'
+
+
+def set_release_notes(bundle_id: str, version: str, directory: str) -> None:
+    """App Store review refuses a version without "What's New" in every language it has."""
+    notes = release_notes.load(directory)
+    bearer = token()
+    app = app_id(bundle_id, bearer)
+    if app is None:
+        sys.exit(f"No app with bundle ID {bundle_id} in App Store Connect")
+    versions = get(
+        f"apps/{app}/appStoreVersions", bearer,
+        **{"filter[versionString]": version, "filter[platform]": "MAC_OS"},
+    )["data"]
+    if not versions:
+        sys.exit(f"Version {version} doesn't exist in App Store Connect yet")
+    localizations = get(
+        f"appStoreVersions/{versions[0]['id']}/appStoreVersionLocalizations", bearer, limit="200",
+    )["data"]
+    for localization in localizations:
+        locale = localization["attributes"]["locale"]
+        text = notes.get(locale) or notes.get(locale.split("-")[0]) or notes["default"]
+        patch(f"appStoreVersionLocalizations/{localization['id']}", bearer, {
+            "data": {
+                "type": "appStoreVersionLocalizations",
+                "id": localization["id"],
+                "attributes": {"whatsNew": text},
+            },
+        })
+        print(f"Set What's New for {locale}")
 
 
 def wait_processed(bundle_id: str, version: str, build: str, timeout_minutes: str = "40") -> None:
@@ -238,6 +283,8 @@ def main() -> None:
         print(version_state(*args))
     elif command == "latest-upload":
         print(latest_upload(*args))
+    elif command == "set-release-notes":
+        set_release_notes(*args)
     elif command == "wait-processed":
         wait_processed(*args)
     elif command == "mac-app-store-profile":

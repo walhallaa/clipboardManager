@@ -1,0 +1,4 @@
+Copy several images or files at once and each one now gets its own card, in the order you copied them.
+Type to search no longer drops your first letter, even when you type fast.
+Calendar items now use Calendar's real red.
+Smaller fixes and polish.
