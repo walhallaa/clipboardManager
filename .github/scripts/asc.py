@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small App Store Connect lookups for the release workflows.
 
-usage: asc.py latest-build  <bundle-id> <marketing-version>   highest build number (0 if none)
+usage: asc.py latest-build  <bundle-id> [marketing-version]   highest build number across all versions unless scoped (0 if none)
        asc.py version-state <bundle-id> <marketing-version>   store state, or NONE if the version doesn't exist yet
        asc.py mac-app-store-profile <bundle-id> <cert-serial> <output-path>
                                                              write an active Mac App Store profile for the
@@ -49,7 +49,11 @@ def token() -> str:
 
 
 def get(path: str, bearer: str, **query) -> dict:
-    url = f"{API}/{path}?{urllib.parse.urlencode(query)}"
+    url = urllib.parse.urljoin(f"{API}/", path)
+    if urllib.parse.urlsplit(url)[:2] != ("https", "api.appstoreconnect.apple.com"):
+        raise ValueError("Refusing to send App Store Connect credentials to another origin")
+    if query:
+        url += f"?{urllib.parse.urlencode(query)}"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {bearer}"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
@@ -72,23 +76,32 @@ def app_id(bundle_id: str, bearer: str) -> str | None:
     return apps[0]["id"] if apps else None
 
 
-def latest_build(bundle_id: str, version: str) -> int:
+def latest_build(bundle_id: str, version: str | None = None) -> int:
     bearer = token()
     app = app_id(bundle_id, bearer)
     if app is None:
         return 0
-    builds = get(
-        "builds", bearer,
-        **{
-            "filter[app]": app,
-            "filter[preReleaseVersion.version]": version,
-            "fields[builds]": "version",
-            "sort": "-uploadedDate",
-            "limit": "200",
-        },
-    )["data"]
-    numbers = [int(b["attributes"]["version"]) for b in builds if b["attributes"]["version"].isdigit()]
-    return max(numbers, default=0)
+    query = {
+        "filter[app]": app,
+        "fields[builds]": "version",
+        "sort": "-uploadedDate",
+        "limit": "200",
+    }
+    if version is not None:
+        query["filter[preReleaseVersion.version]"] = version
+    page = get("builds", bearer, **query)
+    latest = 0
+    while True:
+        for build in page["data"]:
+            number = build["attributes"]["version"]
+            if number.isdigit():
+                latest = max(latest, int(number))
+            elif version is None:
+                sys.exit(f"Cannot allocate an integer build number after non-integer build {number}")
+        next_page = page.get("links", {}).get("next")
+        if not next_page:
+            return latest
+        page = get(next_page, bearer)
 
 
 def version_state(bundle_id: str, version: str) -> str:
