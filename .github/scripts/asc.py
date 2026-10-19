@@ -3,6 +3,9 @@
 
 usage: asc.py latest-build  <bundle-id> <marketing-version>   highest build number (0 if none)
        asc.py version-state <bundle-id> <marketing-version>   store state, or NONE if the version doesn't exist yet
+       asc.py mac-app-store-profile <bundle-id> <cert-serial> <output-path>
+                                                             write an active Mac App Store profile for the
+                                                             distribution cert (created if missing), print its UUID
 env:   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8 file)
 """
 import base64
@@ -11,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -49,6 +53,18 @@ def get(path: str, bearer: str, **query) -> dict:
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {bearer}"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
+
+
+def post(path: str, bearer: str, body: dict) -> dict:
+    request = urllib.request.Request(
+        f"{API}/{path}", data=json.dumps(body).encode(), method="POST",
+        headers={"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        sys.exit(f"POST {path} failed ({error.code}): {error.read().decode()}")
 
 
 def app_id(bundle_id: str, bearer: str) -> str | None:
@@ -90,12 +106,71 @@ def version_state(bundle_id: str, version: str) -> str:
     return attributes.get("appVersionState") or attributes.get("appStoreState") or "UNKNOWN"
 
 
+def mac_app_store_profile(bundle_id: str, cert_serial: str, output_path: str) -> str:
+    """Xcode's automatic export signing falls back to cloud-managed certificates, which
+    the API key can't use, so the workflow signs manually with this profile instead."""
+    bearer = token()
+
+    bundles = get("bundleIds", bearer, **{"filter[identifier]": bundle_id, "limit": "200"})["data"]
+    bundle = next((b["id"] for b in bundles if b["attributes"]["identifier"] == bundle_id), None)
+    if bundle is None:
+        sys.exit(f"Bundle ID {bundle_id} is not registered in the developer account")
+
+    serial = cert_serial.upper().lstrip("0")
+    certs = get(
+        "certificates", bearer,
+        **{"filter[certificateType]": "DISTRIBUTION,MAC_APP_DISTRIBUTION", "limit": "200"},
+    )["data"]
+    cert = next((c["id"] for c in certs if c["attributes"]["serialNumber"].upper().lstrip("0") == serial), None)
+    if cert is None:
+        sys.exit(f"Distribution certificate {cert_serial} from DIST_CERT_P12 is not active in the developer account")
+
+    profiles = get(
+        "profiles", bearer,
+        **{
+            "filter[profileType]": "MAC_APP_STORE",
+            "filter[profileState]": "ACTIVE",
+            "include": "bundleId,certificates",
+            "limit[certificates]": "50",
+            "limit": "200",
+        },
+    )["data"]
+    profile = next(
+        (
+            p for p in profiles
+            if p["relationships"]["bundleId"]["data"]["id"] == bundle
+            and any(c["id"] == cert for c in p["relationships"]["certificates"]["data"])
+        ),
+        None,
+    )
+    if profile is None:
+        profile = post("profiles", bearer, {
+            "data": {
+                "type": "profiles",
+                "attributes": {
+                    "name": f"{bundle_id} Mac App Store CI {time.strftime('%Y%m%d%H%M%S')}",
+                    "profileType": "MAC_APP_STORE",
+                },
+                "relationships": {
+                    "bundleId": {"data": {"type": "bundleIds", "id": bundle}},
+                    "certificates": {"data": [{"type": "certificates", "id": cert}]},
+                },
+            },
+        })["data"]
+
+    with open(output_path, "wb") as file:
+        file.write(base64.b64decode(profile["attributes"]["profileContent"]))
+    return profile["attributes"]["uuid"]
+
+
 def main() -> None:
-    command, bundle_id, version = sys.argv[1:4]
+    command, *args = sys.argv[1:]
     if command == "latest-build":
-        print(latest_build(bundle_id, version))
+        print(latest_build(*args))
     elif command == "version-state":
-        print(version_state(bundle_id, version))
+        print(version_state(*args))
+    elif command == "mac-app-store-profile":
+        print(mac_app_store_profile(*args))
     else:
         sys.exit(__doc__)
 
