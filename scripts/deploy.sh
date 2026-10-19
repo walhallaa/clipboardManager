@@ -1,6 +1,7 @@
 #!/bin/bash
-# Ships dev: bumps the marketing version (build stays 1), commits, merges dev into
-# main and pushes main. Pushing main starts the TestFlight workflow.
+# Ships dev: bumps the marketing version and the build number, commits, merges dev
+# into main and pushes main. Pushing main starts the TestFlight workflow.
+# macOS build numbers must keep increasing across versions, so the build is never reset.
 #
 # usage: scripts/deploy.sh [minor|major|patch] [-y]
 #   minor (default)  3.2.0 -> 3.3.0
@@ -33,6 +34,14 @@ git fetch origin --quiet
 CURRENT="$(grep -m1 'MARKETING_VERSION = ' "$PBXPROJ" | sed -E 's/.*= ([0-9.]+);.*/\1/')"
 [ -n "$CURRENT" ] || fail "Couldn't read MARKETING_VERSION from $PBXPROJ"
 
+# main can be ahead of dev (merged PRs), so the next build follows whichever is higher.
+build_of() { sed -nE 's/.*CURRENT_PROJECT_VERSION = ([0-9]+);.*/\1/p' | head -1; }
+DEV_BUILD="$(build_of < "$PBXPROJ")"
+MAIN_BUILD="$(git show "origin/main:$PBXPROJ" 2>/dev/null | build_of)"
+[ -n "$DEV_BUILD" ] || fail "Couldn't read CURRENT_PROJECT_VERSION from $PBXPROJ"
+CURRENT_BUILD=$(( ${MAIN_BUILD:-0} > DEV_BUILD ? ${MAIN_BUILD:-0} : DEV_BUILD ))
+NEXT_BUILD=$((CURRENT_BUILD + 1))
+
 IFS=. read -r MAJOR MINOR PATCH <<<"$CURRENT"
 MINOR="${MINOR:-0}"; PATCH="${PATCH:-0}"
 case "$LEVEL" in
@@ -42,7 +51,7 @@ case "$LEVEL" in
 esac
 NEXT="$MAJOR.$MINOR.$PATCH"
 
-echo "Deploy: $CURRENT -> $NEXT (build 1), merge dev into main, push main"
+echo "Deploy: $CURRENT ($CURRENT_BUILD) -> $NEXT ($NEXT_BUILD), merge dev into main, push main"
 if [ "$ASSUME_YES" -ne 1 ]; then
     read -r -p "Continue? [y/N] " reply
     [[ "$reply" =~ ^[Yy]$ ]] || fail "Cancelled."
@@ -55,7 +64,10 @@ restore() {
 }
 trap restore EXIT
 
-sed -i '' -E "s/MARKETING_VERSION = [0-9.]+;/MARKETING_VERSION = $NEXT;/; s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = 1;/" "$PBXPROJ"
+# Bring in anything merged straight into main (PRs, bot fixes) so the merge below is clean.
+git merge origin/main --no-edit --quiet || fail "Merging origin/main into dev conflicted. Resolve it on dev, then run the deploy again."
+
+sed -i '' -E "s/MARKETING_VERSION = [0-9.]+;/MARKETING_VERSION = $NEXT;/; s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = $NEXT_BUILD;/" "$PBXPROJ"
 git add "$PBXPROJ"
 git commit --quiet -m "Release $NEXT"
 
@@ -66,4 +78,4 @@ git push origin main
 
 git checkout dev --quiet
 trap - EXIT
-echo "✔ Pushed main with $NEXT. TestFlight workflow is starting. You're back on dev."
+echo "✔ Pushed main with $NEXT ($NEXT_BUILD). TestFlight workflow is starting. You're back on dev."
