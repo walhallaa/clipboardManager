@@ -146,7 +146,7 @@ Two DEBUG-only environment variables are handy while working on it: `MAHMUT_SHOW
 
 ## Say hi
 
-Found a language it highlights wrong, a secret it should have masked and didn't, or an app it refuses to paste into? [Open an issue](https://github.com/orion-supernova/clipboardManager/issues) with what you copied and where it came from, or email **info@walhallaa.com**. Every message gets read.
+Found a language it highlights wrong, a secret it should have masked and didn't, or an app it refuses to paste into? [Open an issue](https://github.com/walhallaa/clipboardManager/issues) with what you copied and where it came from, or email **info@walhallaa.com**. Every message gets read.
 
 © Murat Can Koç. All rights reserved. The source is here to read, not to redistribute. See [LICENSE](LICENSE).
 
