@@ -15,6 +15,6 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check App Store Connect build numbering
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
