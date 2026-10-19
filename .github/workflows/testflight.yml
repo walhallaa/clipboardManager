@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   upload:
-    runs-on: macos-26
+    runs-on: blacksmith-12vcpu-macos-latest
     timeout-minutes: 60
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
