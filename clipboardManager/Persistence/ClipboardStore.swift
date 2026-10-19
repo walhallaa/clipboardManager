@@ -612,7 +612,7 @@ private struct Draft {
             return
         }
 
-        if let data = snapshot.png ?? snapshot.tiff {
+        if let data = snapshot.images.first {
             kind = .image
             imageData = data
             preview = ""

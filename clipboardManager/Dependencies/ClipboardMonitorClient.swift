@@ -25,7 +25,10 @@ extension ClipboardMonitorClient: DependencyKey {
                     guard current != lastChangeCount else { continue }
                     lastChangeCount = current
                     if let snapshot = PasteboardSnapshot(pasteboard: pasteboard) {
-                        continuation.yield(snapshot)
+                        // Newest-first insertion downstream keeps a multi-copy in its original order.
+                        for item in snapshot.copiedItems.reversed() {
+                            continuation.yield(item)
+                        }
                     }
                 }
                 continuation.finish()
