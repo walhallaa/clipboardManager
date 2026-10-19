@@ -1,0 +1,20 @@
+name: Release script checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/testflight.yml"
+      - ".github/workflows/release-script-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check App Store Connect build numbering
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'

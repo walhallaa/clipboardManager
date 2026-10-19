@@ -290,7 +290,7 @@
 				CODE_SIGN_ENTITLEMENTS = clipboardManager/Resources/clipboardManager.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 70;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"clipboardManager/Preview Content\"";
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -323,7 +323,7 @@
 				CODE_SIGN_ENTITLEMENTS = clipboardManager/Resources/clipboardManager.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 70;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"clipboardManager/Preview Content\"";
 				ENABLE_HARDENED_RUNTIME = YES;
