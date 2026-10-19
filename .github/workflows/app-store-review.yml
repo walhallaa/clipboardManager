@@ -1,33 +1,29 @@
 name: App Store Review
 
-# Manual fallback (for example to resubmit after a rejection). The normal path is the
-# "submit-for-review" job at the end of testflight.yml, which waits for your approval.
+# Manual fallback (for example to submit an older build or resubmit after a rejection). The normal
+# path is the "submit-for-review" job at the end of testflight.yml, which waits for your approval.
 # Starting this by hand is the confirmation, so there is no second approval step.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Marketing version (blank = MARKETING_VERSION from the Xcode project)"
+        description: "Marketing version (blank = the most recently uploaded build's version)"
         required: false
       build:
-        description: "Build number (blank = the latest build uploaded for that version)"
+        description: "Build number (blank = the most recently uploaded build)"
         required: false
 
 jobs:
   submit:
-    runs-on: blacksmith-6vcpu-macos-latest
-    timeout-minutes: 30
+    # Only calls the App Store Connect API, so the cheapest Linux runner is plenty.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 60
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
 
       - name: Write App Store Connect API key
         env:
@@ -40,26 +36,39 @@ jobs:
             '{key_id: $id, issuer_id: $issuer, key: $key, in_house: false}' \
             > "$RUNNER_TEMP/asc_api_key.json"
 
-      - name: Read project settings
-        run: .github/scripts/project-settings.sh | tee -a "$GITHUB_ENV"
-
       - name: Decide version and build
         env:
           VERSION_INPUT: ${{ inputs.version }}
           BUILD_INPUT: ${{ inputs.build }}
         run: |
-          VERSION="${VERSION_INPUT:-$MARKETING_VERSION}"
-          BUILD="${BUILD_INPUT:-$(.github/scripts/asc.py latest-build "$BUNDLE_ID" "$VERSION")}"
+          BUNDLE_ID="$(grep -m1 'PRODUCT_BUNDLE_IDENTIFIER = ' ./*.xcodeproj/project.pbxproj | sed -E 's/.*= ([^;]+);.*/\1/')"
+          if [ -z "$VERSION_INPUT" ] || [ -z "$BUILD_INPUT" ]; then
+            read -r LATEST_VERSION LATEST_BUILD <<<"$(.github/scripts/asc.py latest-upload "$BUNDLE_ID")"
+          fi
+          VERSION="${VERSION_INPUT:-$LATEST_VERSION}"
+          if [ -n "$BUILD_INPUT" ]; then
+            BUILD="$BUILD_INPUT"
+          elif [ "$VERSION" = "${LATEST_VERSION:-}" ]; then
+            BUILD="$LATEST_BUILD"
+          else
+            BUILD="$(.github/scripts/asc.py latest-build "$BUNDLE_ID" "$VERSION")"
+          fi
           if [ "$BUILD" = "0" ]; then
-            echo "No build of $VERSION in App Store Connect yet" >&2
+            echo "::error::No build of $VERSION in App Store Connect yet"
             exit 1
           fi
           echo "Submitting $BUNDLE_ID $VERSION ($BUILD) for review" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          {
+            echo "BUNDLE_ID=$BUNDLE_ID"
+            echo "VERSION=$VERSION"
+            echo "BUILD=$BUILD"
+          } >> "$GITHUB_ENV"
+
+      - name: Wait for App Store Connect to process the build
+        run: .github/scripts/asc.py wait-processed "$BUNDLE_ID" "$VERSION" "$BUILD"
 
       - name: Install fastlane
-        run: gem install fastlane -N
+        run: sudo gem install fastlane -N
 
       - name: Submit for review
         run: fastlane submit_for_review version:"$VERSION" build:"$BUILD"

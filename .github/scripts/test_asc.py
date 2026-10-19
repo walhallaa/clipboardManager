@@ -61,6 +61,29 @@ class LatestBuildTests(unittest.TestCase):
             asc.latest_build("com.example.app")
 
 
+class LatestUploadTests(unittest.TestCase):
+    def setUp(self):
+        patch.object(asc, "token", return_value="token").start()
+        self.app_id = patch.object(asc, "app_id", return_value="app-id").start()
+        self.get = patch.object(asc, "get").start()
+        self.addCleanup(patch.stopall)
+
+    def test_returns_version_and_build_of_newest_upload(self):
+        self.get.return_value = {
+            "data": [{"attributes": {"version": "70"}}],
+            "included": [{"attributes": {"version": "3.2.0"}}],
+        }
+        self.assertEqual(asc.latest_upload("com.example.app"), "3.2.0 70")
+        query = self.get.call_args.kwargs
+        self.assertEqual(query["sort"], "-uploadedDate")
+        self.assertEqual(query["limit"], "1")
+
+    def test_no_builds(self):
+        self.get.return_value = {"data": []}
+        with self.assertRaisesRegex(SystemExit, "No builds"):
+            asc.latest_upload("com.example.app")
+
+
 class WaitProcessedTests(unittest.TestCase):
     def setUp(self):
         patch.object(asc, "token", return_value="token").start()
