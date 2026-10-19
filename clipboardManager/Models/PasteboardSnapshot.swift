@@ -23,8 +23,8 @@ struct PasteboardSnapshot: Sendable {
     var isTransient: Bool
     var string: String?
     var rtf: Data?
-    var png: Data?
-    var tiff: Data?
+    /// One PNG (or TIFF when there is no PNG) per pasteboard item, in copy order.
+    var images: [Data]
     var fileURLs: [URL]
     var colorHex: String?
     var source: SourceApp
@@ -56,14 +56,15 @@ struct PasteboardSnapshot: Sendable {
 
         // Image bytes are only copied when nothing else will win classification
         // (files beat images, non-empty text beats images), so rich-text copies that
-        // also carry a TIFF never pay for the copy.
+        // also carry a TIFF never pay for the copy. Multi-select copies put one image
+        // per pasteboard item, so every item is read, not just the first.
         let hasText = !(string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if urls.isEmpty, !hasText {
-            png = pasteboard.data(forType: .png)
-            tiff = png == nil ? pasteboard.data(forType: .tiff) : nil
+            images = (pasteboard.pasteboardItems ?? []).compactMap { item in
+                item.data(forType: .png) ?? item.data(forType: .tiff)
+            }
         } else {
-            png = nil
-            tiff = nil
+            images = []
         }
 
         if let color = pasteboard.readObjects(forClasses: [NSColor.self])?.first as? NSColor {
@@ -79,5 +80,25 @@ struct PasteboardSnapshot: Sendable {
         }
     }
 
-    var hasImage: Bool { png != nil || tiff != nil }
+    var hasImage: Bool { !images.isEmpty }
+
+    /// A multi-select copy of images or files becomes one snapshot per image or file,
+    /// so each gets its own item. Anything else comes back as a single snapshot.
+    var copiedItems: [PasteboardSnapshot] {
+        if fileURLs.count > 1 {
+            return fileURLs.map { url in
+                var item = self
+                item.fileURLs = [url]
+                return item
+            }
+        }
+        if images.count > 1 {
+            return images.map { data in
+                var item = self
+                item.images = [data]
+                return item
+            }
+        }
+        return [self]
+    }
 }

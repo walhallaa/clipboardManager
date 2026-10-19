@@ -1,0 +1,80 @@
+name: App Store Review
+
+# Manual only. Submits a build that App Store Connect has already processed.
+# Protect it with an environment that requires a reviewer (repo Settings > Environments).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version (blank = MARKETING_VERSION from the Xcode project)"
+        required: false
+      build:
+        description: "Build number (blank = the latest build uploaded for that version)"
+        required: false
+
+jobs:
+  submit:
+    runs-on: macos-26
+    environment: app-store-review
+    timeout-minutes: 30
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          jq -n --arg id "$ASC_KEY_ID" --arg issuer "$ASC_ISSUER_ID" --arg key "$ASC_PRIVATE_KEY" \
+            '{key_id: $id, issuer_id: $issuer, key: $key, in_house: false}' \
+            > "$RUNNER_TEMP/asc_api_key.json"
+
+      - name: Read project settings
+        run: .github/scripts/project-settings.sh | tee -a "$GITHUB_ENV"
+
+      - name: Decide version and build
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          BUILD_INPUT: ${{ inputs.build }}
+        run: |
+          VERSION="${VERSION_INPUT:-$MARKETING_VERSION}"
+          BUILD="${BUILD_INPUT:-$(.github/scripts/asc.py latest-build "$BUNDLE_ID" "$VERSION")}"
+          if [ "$BUILD" = "0" ]; then
+            echo "No build of $VERSION in App Store Connect yet" >&2
+            exit 1
+          fi
+          echo "Submitting $BUNDLE_ID $VERSION ($BUILD) for review" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+
+      - name: Install fastlane
+        run: gem install fastlane -N
+
+      - name: Submit for review
+        run: |
+          fastlane deliver \
+            --api_key_path "$RUNNER_TEMP/asc_api_key.json" \
+            --app_identifier "$BUNDLE_ID" \
+            --platform osx \
+            --app_version "$VERSION" \
+            --build_number "$BUILD" \
+            --skip_binary_upload \
+            --skip_metadata \
+            --skip_screenshots \
+            --automatic_release false \
+            --submit_for_review \
+            --force
+
+      - name: Remove API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc_api_key.json" "$RUNNER_TEMP/AuthKey.p8"
