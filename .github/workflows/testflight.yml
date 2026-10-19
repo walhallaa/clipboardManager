@@ -36,6 +36,15 @@ jobs:
         env:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
         run: |
+          MISSING=0
+          for NAME in ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY; do
+            if [ -z "${!NAME:-}" ]; then
+              echo "::error::Required secret $NAME is unavailable to the TestFlight job. Configure it in the intended GitHub Actions secret scope."
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then exit 1; fi
+
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
           echo "ASC_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
 
