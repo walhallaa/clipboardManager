@@ -16,8 +16,8 @@ lane :submit_for_review do |options|
     # Apple approving the version must not release it; you press Release yourself.
     automatic_release: false,
     submit_for_review: true,
-    # In-app purchase prechecks need an Apple ID login, not an API key.
-    precheck_include_in_app_purchases: false,
+    # Precheck can't finish with an API key (it needs an Apple ID login), so it only adds noise.
+    run_precheck_before_submit: false,
     force: true
   )
 end
